@@ -1,0 +1,9 @@
+#Skip eclipse metadata and unuseful folders for project
+.metadata/
+.classpath
+.project
+trending/.settings/
+trending/target/
+
+#Skip Mac files
+.DS_Store
