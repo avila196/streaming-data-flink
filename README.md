@@ -15,6 +15,11 @@ The following languages are used:
 * Java: All Kafka connections (ingestion) and Flink processes are written in Java 8.
 * Python: The web app that allows any user to input data and the web app that shows all results are written in Python using a Streamlit library.
 
+## Text files (list of words)
+In order to find the trending words, the following lists are used to remove stop words and offensive words:
+* <code>stop_words.txt</code>: List of english stop words used by the NLTK library.
+* <code>offensive_words.txt</code>: List of offensive/swear/profane words banned by Google in past years.
+
 ## How to run it locally?
 TBD!
 
