@@ -9,3 +9,4 @@ trending/target/
 .DS_Store
 
 #Skip text files generated in program
+results/
