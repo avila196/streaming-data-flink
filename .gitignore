@@ -9,4 +9,9 @@ trending/target/
 .DS_Store
 
 #Skip text files generated in program
-results/
+trending/results/
+
+#Skip dataset for DL model and ipynb checkpoints
+dl_training/dataset/
+.ipynb
+.ipynb_checkpoints/
