@@ -139,6 +139,7 @@ def main():
         json.dump(dict_labels, f)
 
 
-
+if __name__ == "__main__":
+    main()
 
 
