@@ -116,11 +116,19 @@ def main():
                              loss=loss,
                              metrics=["accuracy"])
     
+    class myCallback(tf.keras.callbacks.Callback):
+        def on_epoch_end(self, epoch, logs={}):
+            print("epoch completed!")
+            if(logs.get('accuracy')>0.95):
+                print("\nReached 95% accuracy so cancelling training!")
+                self.model.stop_training = True
     
     #Fit model
+    callback = myCallback()
     history = classifier_model.fit(x=x_train, y=y_train,
                                    validation_data=(x_val, y_val), 
-                                   epochs=epochs)
+                                   epochs=epochs,
+                                   callbacks=[callback])
     
         
     
