@@ -11,7 +11,8 @@ trending/target/
 #Skip text files generated in program
 trending/results/
 
-#Skip dataset for DL model and ipynb checkpoints
+#Skip dataset for DL model (json files), H5 file and ipynb checkpoints
 *.json
+*.h5
 *.ipynb
 .ipynb_checkpoints/

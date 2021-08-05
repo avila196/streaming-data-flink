@@ -1,0 +1,16 @@
+version: "3.9"
+services:
+  topic_classifier:
+    hostname: tc
+    build: ./tf_classifier
+    ports:
+      - 5000:5000
+
+  flink:
+    hostname: flink
+    build: ./trending
+    ports:
+      - 8081:8081
+      - 9092:9092
+    depends_on:
+      - topic_classifier

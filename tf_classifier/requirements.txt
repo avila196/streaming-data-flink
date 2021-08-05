@@ -1,0 +1,6 @@
+flask
+flasgger
+tensorflow
+tensorflow-text
+tf-models-official
+scikit-learn

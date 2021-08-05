@@ -1,11 +1,23 @@
 package trending;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.flink.util.Collector;
+import org.apache.hc.client5.http.classic.HttpClient;
+import org.apache.hc.client5.http.classic.methods.HttpPost;
+import org.apache.hc.client5.http.entity.UrlEncodedFormEntity;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
+import org.apache.hc.client5.http.impl.classic.HttpClients;
+import org.apache.hc.core5.http.NameValuePair;
+import org.apache.hc.core5.http.io.entity.EntityUtils;
+import org.apache.hc.core5.http.message.BasicNameValuePair;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.core.fs.FileSystem.WriteMode;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
@@ -13,8 +25,11 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
+import org.apache.flink.streaming.api.datastream.AsyncDataStream;
 import org.apache.flink.streaming.api.datastream.BroadcastStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.async.ResultFuture;
+import org.apache.flink.streaming.api.functions.async.RichAsyncFunction;
 import org.apache.flink.streaming.api.functions.co.BroadcastProcessFunction;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer;
@@ -41,25 +56,24 @@ public class TrendingTopics {
 		final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
 		//Create DataStream for stop words and get its respective BroadcastStream object
-		DataStream<String> stopWords = env.readTextFile("/Users/davidavila/Documents/github_repos/"
-				+ "streaming-data-flink/trending/data/stop_words.txt");
+		DataStream<String> stopWords = env.readTextFile("/docker/proj/data/stop_words.txt");
 		BroadcastStream<String> stopWordsBroadcast = stopWords.broadcast(stopWordsDescriptor);
 
 		//Create DataStream for offensive words and get its respective BroadcastStream object
-		DataStream<String> offensiveWords = env.readTextFile("/Users/davidavila/Documents/github_repos/"
-				+ "streaming-data-flink/trending/data/offensive_words.txt");
+		DataStream<String> offensiveWords = env.readTextFile("/docker/proj/data/offensive_words.txt");
 		BroadcastStream<String> offensiveWordsBroadcast = offensiveWords.broadcast(offensiveWordsDescriptor);
 
 		//Start listening to Kafka server for all input data. The code parses the data as it comes,
 		//removing all punctuation and splitting it
 		Properties prop = new Properties();
 		prop.setProperty("bootstrap.servers", "localhost:9092");
-		DataStream<ArrayList<String>> kafkaData = env.addSource(new FlinkKafkaConsumer<String>("test", new SimpleStringSchema(), prop))
+		DataStream<String> originalText = env.addSource(new FlinkKafkaConsumer<String>("news", new SimpleStringSchema(), prop));
+		DataStream<ArrayList<String>> kafkaData = originalText
 				.map(new MapFunction<String, ArrayList<String>>() {
 					public ArrayList<String> map(String text) {
 						//We filter out the words by removing all non-alphabetic chars, making all lower-case
 						//and splitting by any whitespace to get all words
-						String[] words = text.replaceAll("[^a-zA-Z ]", "").toLowerCase().split("\\s+");
+						String[] words = text.replaceAll("[^a-zA-Z' ]", "").toLowerCase().split("\\s+");
 						ArrayList<String> wordsList = new ArrayList<>();
 						for(String word : words) {
 							wordsList.add(word);
@@ -77,7 +91,7 @@ public class TrendingTopics {
 		DataStream<ArrayList<String>> offensiveWordsFounds = reducedWords
 				.connect(offensiveWordsBroadcast)
 				.process(new OffensiveWordsCheck(true));
-		
+
 		//(3) Check against offensive words and get non-offensive ones
 		reducedWords = reducedWords
 				.connect(offensiveWordsBroadcast)
@@ -86,7 +100,14 @@ public class TrendingTopics {
 		//(4) Map all original words to categories and aggregate on the categories counts (adding them) to find the 
 		//trending topics. The categories are found using a pre-trained ML classification model. A sliding window
 		//is used with 60 sec size and 2 sec slide time.
-		//TODO! Get topic/category using kafkaData, original cleaned data!
+		DataStream<Tuple2<String, Integer>> trendingTopics = AsyncDataStream.unorderedWait(originalText, new HttpRequestTopic(), 10, TimeUnit.SECONDS)
+				.map(new MapFunction<String, Tuple2<String, Integer>>() {
+					public Tuple2<String, Integer> map(String topic) {
+						return new Tuple2<String, Integer>(topic, 1);
+					}
+				}).keyBy(word -> word.f0)
+				.window(SlidingProcessingTimeWindows.of(Time.seconds(60), Time.seconds(2)))
+				.sum(1);
 
 		//(5) Map all offensive words to counts and aggregate on the counts (adding them) to find the most common ones.
 		//This is to find the most common offensive words. A sliding window is used with 60 sec size and 2 sec slide time
@@ -122,10 +143,9 @@ public class TrendingTopics {
 		//   - Trending offensive words
 		//TODO!
 
-		trendingWords.writeAsText("/Users/davidavila/Documents/github_repos/"
-				+ "streaming-data-flink/trending/results/t_words.txt", WriteMode.OVERWRITE);
-		mostCommonOffensive.writeAsText("/Users/davidavila/Documents/github_repos/"
-				+ "streaming-data-flink/trending/results/o_words.txt", WriteMode.OVERWRITE);
+		trendingWords.writeAsText("/docker/proj/results/t_words.txt", WriteMode.OVERWRITE);
+		mostCommonOffensive.writeAsText("/docker/proj/results/o_words.txt", WriteMode.OVERWRITE);
+		trendingTopics.writeAsText("/docker/proj/results/t_topics.txt", WriteMode.OVERWRITE);
 
 		// execute program
 		env.execute("Streaming Trending Topics!");
@@ -217,5 +237,35 @@ public class TrendingTopics {
 			//We just put the word inside the broadcast state
 			ctx.getBroadcastState(offensiveWordsDescriptor).put(word, word);
 		} 
+	}
+
+	//Class that broadcasts all input words against offensive words
+	@SuppressWarnings("serial")
+	public static class HttpRequestTopic extends RichAsyncFunction<String, String> {
+
+		//Fields of the class
+		private transient HttpClient httpclient;
+		private transient HttpPost httppost;
+
+		@Override
+		public void open(Configuration parameters) {
+			httpclient = HttpClients.createDefault();
+			httppost = new HttpPost("http://tc:5000/predict");
+		}
+
+		@Override
+		public void asyncInvoke(String input, ResultFuture<String> resultFuture) {
+			//We make a POST request to the classifier API to get the topic
+			List<NameValuePair> params = new ArrayList<NameValuePair>(1);
+			params.add(new BasicNameValuePair("text", input));
+			httppost.setEntity(new UrlEncodedFormEntity(params));
+			//Execute and get the response
+			try {
+				CloseableHttpResponse response = (CloseableHttpResponse) httpclient.execute(httppost);
+				resultFuture.complete(Collections.singleton(EntityUtils.toString(response.getEntity())));
+			} catch (Exception e) {
+				resultFuture.complete(Collections.singleton("UNK"));
+			}
+		}
 	}
 }
